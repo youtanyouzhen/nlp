@@ -13,6 +13,7 @@ from torch.utils.data import (
     SequentialSampler,
     TensorDataset,
 )
+from pytorch_transformers import *
 from pytorch_pretrained_bert.modeling import BertForSequenceClassification
 from pytorch_pretrained_bert.optimization import BertAdam
 from tqdm import tqdm
@@ -44,9 +45,13 @@ class BERTSequenceClassifier:
         self.cache_dir = cache_dir
 
         # create classifier
-        self.model = BertForSequenceClassification.from_pretrained(
+        self.model = DistilBertForSequenceClassification.from_pretrained(
             language, cache_dir=cache_dir, num_labels=num_labels
         )
+
+        #self.model = BertForSequenceClassification.from_pretrained(
+        #    language, cache_dir=cache_dir, num_labels=num_labels
+        #)
         self.has_cuda = self.cuda
 
     @cached_property
@@ -181,11 +186,13 @@ class BERTSequenceClassifier:
 
                 y_h = self.model(
                     input_ids=x_batch,
-                    token_type_ids=token_type_ids_batch,
+                    #token_type_ids=token_type_ids_batch,
                     attention_mask=mask_batch,
                     labels=None,
                 )
-                loss = loss_func(y_h, y_batch).mean()
+                #print(y_h)
+                #print(y_batch)
+                loss = loss_func(y_h[0], y_batch).mean()
 
                 training_loss += loss.item()
 
@@ -275,11 +282,11 @@ class BERTSequenceClassifier:
             with torch.no_grad():
                 p_batch = self.model(
                     input_ids=x_batch,
-                    token_type_ids=token_type_ids_batch,
+                    #token_type_ids=token_type_ids_batch,
                     attention_mask=mask_batch,
                     labels=None,
                 )
-            preds.append(p_batch.cpu())
+            preds.append(p_batch[0].cpu())
 
         preds = np.concatenate(preds)
 

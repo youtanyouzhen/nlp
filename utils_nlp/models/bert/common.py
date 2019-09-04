@@ -14,6 +14,7 @@ from collections import Iterable
 from enum import Enum
 
 import torch
+from pytorch_transformers import *
 from pytorch_pretrained_bert.tokenization import BertTokenizer
 from torch.utils.data import (
     DataLoader,
@@ -32,6 +33,7 @@ BERT_MAX_LEN = 512
 class Language(str, Enum):
     """An enumeration of the supported pretrained models and languages."""
 
+    ENGLISHDISTILL: str = "distilbert-base-uncased"
     ENGLISH: str = "bert-base-uncased"
     ENGLISHCASED: str = "bert-base-cased"
     ENGLISHLARGE: str = "bert-large-uncased"
@@ -52,9 +54,13 @@ class Tokenizer:
             cache_dir (str, optional): Location of BERT's cache directory.
                 Defaults to ".".
         """
-        self.tokenizer = BertTokenizer.from_pretrained(
+        self.tokenizer = DistilBertTokenizer.from_pretrained(
             language, do_lower_case=to_lower, cache_dir=cache_dir
         )
+
+        #self.tokenizer = BertTokenizer.from_pretrained(
+        #    language, do_lower_case=to_lower, cache_dir=cache_dir
+        #)
         self.language = language
 
     def tokenize(self, text):
