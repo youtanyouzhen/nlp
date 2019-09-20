@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 import torch
 from torch.utils.data import Dataset, TensorDataset, DataLoader, RandomSampler, SequentialSampler
+from torch.utils.data.distributed import DistributedSampler
 
 from pytorch_transformers.tokenization_bert import BasicTokenizer
 from pytorch_transformers import BertTokenizer, XLNetTokenizer
@@ -50,6 +51,123 @@ CACHED_FEATURES_TRAIN_FILE = "cached_features_train.jsonl"
 CACHED_EXAMPLES_TEST_FILE = "cached_examples_test.jsonl"
 CACHED_FEATURES_TEST_FILE = "cached_features_test.jsonl"
 
+import horovod.torch as hvd
+def get_qa_dataloader_distributed(
+    qa_dataset,
+    model_name,
+    is_training,
+    batch_size=32,
+    to_lower=False,
+    max_question_length=64,
+    max_seq_len=MAX_SEQ_LEN,
+    doc_stride=128,
+    cache_dir="./cached_qa_features",
+):
+    hvd.init()
+    local_rank = hvd.local_rank()
+    world_size = hvd.size()
+
+    if not os.path.exists(cache_dir):
+        os.makedirs(cache_dir)
+
+    model_type = model_name.split("-")[0]
+
+    tokenizer_class = TOKENIZER_CLASSES[model_type]
+    tokenizer = tokenizer_class.from_pretrained(
+        model_name, do_lower_case=to_lower, cache_dir=cache_dir
+    )
+
+    if is_training and not qa_dataset.actual_answer_available:
+        raise Exception("answer_start and answer_text must be provided for training data.")
+
+    if is_training:
+        examples_file = os.path.join(cache_dir, CACHED_EXAMPLES_TRAIN_FILE)
+        features_file = os.path.join(cache_dir, CACHED_FEATURES_TRAIN_FILE)
+    else:
+        examples_file = os.path.join(cache_dir, CACHED_EXAMPLES_TEST_FILE)
+        features_file = os.path.join(cache_dir, CACHED_FEATURES_TEST_FILE)
+
+    with jsonlines.open(examples_file, "w") as examples_writer, jsonlines.open(
+        features_file, "w"
+    ) as features_writer:
+
+        unique_id_all = []
+        unique_id_cur = 1000000000
+
+        features = []
+        qa_examples = []
+        qa_examples_json = []
+        features_json = []
+
+        for qa_input in qa_dataset:
+            qa_example_cur = _create_qa_example(qa_input, is_training=is_training)
+
+            qa_examples.append(qa_example_cur)
+
+            qa_examples_json.append(
+                {"qa_id": qa_example_cur.qa_id, "doc_tokens": qa_example_cur.doc_tokens}
+            )
+
+            features_cur = _create_qa_features(
+                qa_example_cur,
+                tokenizer=tokenizer,
+                unique_id=unique_id_cur,
+                is_training=is_training,
+                max_question_length=max_question_length,
+                max_seq_len=max_seq_len,
+                doc_stride=doc_stride,
+            )
+            features += features_cur
+
+            for f in features_cur:
+                features_json.append(
+                    {
+                        "qa_id": f.qa_id,
+                        "unique_id": f.unique_id,
+                        "tokens": f.tokens,
+                        "token_to_orig_map": f.token_to_orig_map,
+                        "token_is_max_context": f.token_is_max_context,
+                        "paragraph_len": f.paragraph_len,
+                    }
+                )
+                unique_id_cur = f.unique_id
+                unique_id_all.append(unique_id_cur)
+
+        examples_writer.write_all(qa_examples_json)
+        features_writer.write_all(features_json)
+
+        # TODO: maybe generalize the following code
+        input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
+        input_mask = torch.tensor([f.input_mask for f in features], dtype=torch.long)
+        segment_ids = torch.tensor([f.segment_ids for f in features], dtype=torch.long)
+        cls_index = torch.tensor([f.cls_index for f in features], dtype=torch.long)
+        p_mask = torch.tensor([f.p_mask for f in features], dtype=torch.float)
+
+        if is_training:
+            start_positions = torch.tensor([f.start_position for f in features], dtype=torch.long)
+            end_positions = torch.tensor([f.end_position for f in features], dtype=torch.long)
+            qa_dataset = TensorDataset(
+                input_ids,
+                input_mask,
+                segment_ids,
+                start_positions,
+                end_positions,
+                cls_index,
+                p_mask,
+            )
+            sampler = DistributedSampler(
+                qa_dataset, num_replicas=world_size, rank=local_rank
+            )
+            # sampler = RandomSampler(qa_dataset)
+        else:
+            unique_id_all = torch.tensor(unique_id_all, dtype=torch.long)
+            qa_dataset = TensorDataset(
+                input_ids, input_mask, segment_ids, cls_index, p_mask, unique_id_all
+            )
+            sampler = SequentialSampler(qa_dataset)
+
+        dataloader = DataLoader(qa_dataset, sampler=sampler, batch_size=batch_size)
+        return dataloader
 
 def _is_iterable_but_not_string(obj):
     """Check whether obj is a non-string Iterable."""
