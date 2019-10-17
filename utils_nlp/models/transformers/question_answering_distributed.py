@@ -188,10 +188,12 @@ class AnswerExtractor:
         hvd.broadcast_parameters(self.model.state_dict(), root_rank=0)
         hvd.broadcast_optimizer_state(optimizer, root_rank=0)
 
-        if warmup_proportion:
-            warmup_steps = t_total * warmup_proportion
-        else:
-            warmup_steps = 0
+        # if warmup_proportion:
+        #     warmup_steps = t_total * warmup_proportion
+        # else:
+        #     warmup_steps = 0
+
+        warmup_steps = 1000
 
         scheduler = WarmupLinearSchedule(optimizer, warmup_steps=warmup_steps, t_total=t_total)
 
