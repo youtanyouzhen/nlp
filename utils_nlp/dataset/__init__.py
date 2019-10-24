@@ -4,8 +4,8 @@
 from enum import Enum
 import nltk
 
-nltk.download("punkt", quiet=True)
-nltk.download("stopwords", quiet=True)
+# nltk.download("punkt", quiet=True)
+# nltk.download("stopwords", quiet=True)
 
 
 class Split(str, Enum):
